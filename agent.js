@@ -14,7 +14,6 @@ const { SYSTEM_PROMPT } = require("./system-prompt");
 const execAsync = promisify(exec);
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// ─── Tool definition ──────────────────────────────────────────────────────────
 const TOOLS = [
   {
     name: "bash",
@@ -32,12 +31,11 @@ const TOOLS = [
   },
 ];
 
-// ─── Bash executor ────────────────────────────────────────────────────────────
 async function runBash(command, workDir) {
   try {
     const { stdout, stderr } = await execAsync(command, {
       cwd: workDir,
-      timeout: 120_000,          // 2 min max per command
+      timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
     });
     const out = stdout.trim();
@@ -48,33 +46,42 @@ async function runBash(command, workDir) {
   }
 }
 
-// ─── Main agent function ──────────────────────────────────────────────────────
-/**
- * @param {string} topic      - Presentation topic (e.g. "미래차 슬라이드 10장")
- * @param {string} workDir    - Temp directory for this job
- * @param {string} outputPath - Where to save the final .pptx
- * @returns {Promise<string>} - Path to the generated .pptx file
- */
 async function generatePptx(topic, workDir, outputPath) {
-  // Ensure workDir exists and has pptxgenjs installed
   fs.mkdirSync(workDir, { recursive: true });
   await execAsync("npm init -y && npm install pptxgenjs", { cwd: workDir });
 
+  const scriptTemplate = `const OUTPUT_PATH = '${outputPath}';
+const pptxgen = require('pptxgenjs');
+
+(async () => {
+  const pres = new pptxgen();
+  pres.layout = 'LAYOUT_16x9';
+
+  // ===== ADD YOUR 10+ SLIDES HERE =====
+  // Every slide needs a visual element (shapes, charts, stat callouts).
+  // Korean language content throughout.
+  // COLOR RULE: never use "#" prefix. 6-char hex only: e.g. color: "FF0000"
+
+  // ===== END SLIDES =====
+
+  await pres.writeFile({ fileName: OUTPUT_PATH });
+  console.log('SAVED:' + OUTPUT_PATH);
+})().catch(err => {
+  console.error('SCRIPT_ERROR:', err.stack || err.message);
+  process.exit(1);
+});`;
+
   const userMessage =
     `Generate a high-quality PowerPoint presentation about: ${topic}\n\n` +
-    `Requirements:\n` +
-    `- At least 10 slides\n` +
-    `- Professional, visually rich design (visual element on every slide)\n` +
-    `- Korean language content\n` +
-    `- pptxgenjs is already installed in: ${workDir}\n\n` +
-    `IMPORTANT - Follow these exact steps:\n` +
-    `Step 1: Write the complete pptxgenjs script to ${workDir}/create.js\n` +
-    `        The FIRST line of the script MUST be: const OUTPUT_PATH = '${outputPath}';\n` +
-    `        Use OUTPUT_PATH as the fileName in pres.writeFile({ fileName: OUTPUT_PATH })\n` +
-    `Step 2: Run it: node ${workDir}/create.js\n` +
-    `Step 3: Verify the file was created: ls -la ${outputPath}\n` +
-    `        If ls shows the file exists, you are done. Do not do anything else.\n` +
-    `        If the file does NOT exist, fix the script and retry.`;
+    `CRITICAL INSTRUCTIONS:\n` +
+    `1. Write the script to ${workDir}/create.js using EXACTLY this structure:\n\n` +
+    scriptTemplate + `\n\n` +
+    `2. Fill in 10+ slides inside the "ADD YOUR 10+ SLIDES HERE" section.\n` +
+    `3. Run it: node ${workDir}/create.js\n` +
+    `4. Check output: ls -la ${outputPath}\n` +
+    `   - File exists → DONE, stop immediately.\n` +
+    `   - SCRIPT_ERROR → fix only that error, retry from step 3.\n` +
+    `   - Never change the async IIFE structure or OUTPUT_PATH line.`;
 
   const messages = [{ role: "user", content: userMessage }];
   const MAX_ITERATIONS = 15;
@@ -91,21 +98,15 @@ async function generatePptx(topic, workDir, outputPath) {
     });
 
     console.log(`[agent] stop_reason: ${response.stop_reason}`);
-
-    // Add assistant turn FIRST — must happen before any break/continue
     messages.push({ role: "assistant", content: response.content });
 
-    // Find all tool_use blocks (don't rely solely on stop_reason)
     const toolUseBlocks = response.content.filter((b) => b.type === "tool_use");
 
-    // If no tool calls, agent is done
     if (toolUseBlocks.length === 0) {
       console.log("[agent] No tool_use blocks — finishing.");
       break;
     }
 
-    // CRITICAL: Every tool_use block MUST get a tool_result in the next user message.
-    // Missing even one causes Claude API to return 400.
     const toolResults = [];
 
     for (const block of toolUseBlocks) {
@@ -114,15 +115,13 @@ async function generatePptx(topic, workDir, outputPath) {
         const command = block.input?.command;
         if (!command) {
           result = "ERROR: tool_use block has no 'command' field";
-          console.warn(`[agent] block ${block.id} missing command`);
         } else {
           console.log(`[agent] bash [${block.id.slice(-6)}]: ${command.slice(0, 100)}`);
           result = await runBash(command, workDir);
-          console.log(`[agent] result: ${result.slice(0, 200)}`);
+          console.log(`[agent] result: ${result.slice(0, 300)}`);
         }
       } catch (err) {
         result = `ERROR: ${err.message}`;
-        console.error(`[agent] Exception for block ${block.id}:`, err.message);
       }
 
       toolResults.push({
@@ -133,13 +132,15 @@ async function generatePptx(topic, workDir, outputPath) {
     }
 
     messages.push({ role: "user", content: toolResults });
+
+    if (fs.existsSync(outputPath)) {
+      console.log("[agent] Output file detected — finishing early.");
+      break;
+    }
   }
 
-  // Verify output exists
   if (!fs.existsSync(outputPath)) {
-    throw new Error(
-      `Agent finished but ${outputPath} was not created. Check agent logs.`
-    );
+    throw new Error(`Agent finished but ${outputPath} was not created.`);
   }
 
   return outputPath;
