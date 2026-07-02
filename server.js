@@ -1,10 +1,10 @@
 /**
  * server.js
- * Express HTTP server â receives a topic, generates a PPTX via Claude agent,
+ * Express HTTP server — receives a topic, generates a PPTX via Claude agent,
  * uploads to Supabase Storage, and returns the public download URL.
  *
  * POST /api/generate-pptx
- *   Body: { "topic": "ë¯¸ëì°¨ ì¬ë¼ì´ë 10ì¥" }
+ *   Body: { "topic": "미래차 슬라이드 10장" }
  *   Response: { "success": true, "url": "https://...", "filename": "presentation.pptx" }
  */
 
@@ -17,9 +17,19 @@ const os = require("os");
 const { generatePptx } = require("./agent");
 
 const app = express();
+
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 app.use(express.json());
 
-// âââ Clients ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ─── Clients ──────────────────────────────────────────────────────────────────
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY   // Use service role key (server-side only!)
@@ -28,12 +38,12 @@ const supabase = createClient(
 const BUCKET = process.env.SUPABASE_BUCKET || "pptx-files";
 const TMP_DIR = process.env.TMP_DIR || os.tmpdir();
 
-// âââ Routes âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ─── Routes ───────────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 /**
  * POST /api/generate-pptx
- * Main endpoint â topic â Claude agent â Supabase Storage URL
+ * Main endpoint — topic → Claude agent → Supabase Storage URL
  */
 app.post("/api/generate-pptx", async (req, res) => {
   const { topic } = req.body ?? {};
@@ -98,7 +108,7 @@ app.post("/api/generate-pptx", async (req, res) => {
   }
 });
 
-// âââ Start ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`PPTX Agent server running on port ${PORT}`);
