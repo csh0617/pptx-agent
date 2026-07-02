@@ -14,7 +14,7 @@ const { SYSTEM_PROMPT } = require("./system-prompt");
 const execAsync = promisify(exec);
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// ─── Tool definition ────────────────────────────────────────────────
+// ─── Tool definition ──────────────────────────────────────────────────────────
 const TOOLS = [
   {
     name: "bash",
@@ -32,12 +32,12 @@ const TOOLS = [
   },
 ];
 
-// ─── Bash executor ────────────────────────────────────────────
+// ─── Bash executor ────────────────────────────────────────────────────────────
 async function runBash(command, workDir) {
   try {
     const { stdout, stderr } = await execAsync(command, {
       cwd: workDir,
-      timeout: 120_000,
+      timeout: 120_000,          // 2 min max per command
       maxBuffer: 10 * 1024 * 1024,
     });
     const out = stdout.trim();
@@ -48,14 +48,15 @@ async function runBash(command, workDir) {
   }
 }
 
-// ─── Main agent function ──────────────────────────────────────────
+// ─── Main agent function ──────────────────────────────────────────────────────
 /**
- * @param {string} topic      - Presentation topic
+ * @param {string} topic      - Presentation topic (e.g. "미래차 슬라이드 10장")
  * @param {string} workDir    - Temp directory for this job
  * @param {string} outputPath - Where to save the final .pptx
  * @returns {Promise<string>} - Path to the generated .pptx file
  */
 async function generatePptx(topic, workDir, outputPath) {
+  // Ensure workDir exists and has pptxgenjs installed
   fs.mkdirSync(workDir, { recursive: true });
   await execAsync("npm init -y && npm install pptxgenjs", { cwd: workDir });
 
@@ -65,9 +66,15 @@ async function generatePptx(topic, workDir, outputPath) {
     `- At least 10 slides\n` +
     `- Professional, visually rich design (visual element on every slide)\n` +
     `- Korean language content\n` +
-    `- pptxgenjs is already installed in: ${workDir}\n` +
-    `- Save the final file to: ${outputPath}\n\n` +
-    `Start by writing the complete pptxgenjs script to ${workDir}/create.js, then run it.`;
+    `- pptxgenjs is already installed in: ${workDir}\n\n` +
+    `IMPORTANT - Follow these exact steps:\n` +
+    `Step 1: Write the complete pptxgenjs script to ${workDir}/create.js\n` +
+    `        The FIRST line of the script MUST be: const OUTPUT_PATH = '${outputPath}';\n` +
+    `        Use OUTPUT_PATH as the fileName in pres.writeFile({ fileName: OUTPUT_PATH })\n` +
+    `Step 2: Run it: node ${workDir}/create.js\n` +
+    `Step 3: Verify the file was created: ls -la ${outputPath}\n` +
+    `        If ls shows the file exists, you are done. Do not do anything else.\n` +
+    `        If the file does NOT exist, fix the script and retry.`;
 
   const messages = [{ role: "user", content: userMessage }];
   const MAX_ITERATIONS = 15;
@@ -85,7 +92,7 @@ async function generatePptx(topic, workDir, outputPath) {
 
     console.log(`[agent] stop_reason: ${response.stop_reason}`);
 
-    // Add assistant turn FIRST
+    // Add assistant turn FIRST — must happen before any break/continue
     messages.push({ role: "assistant", content: response.content });
 
     // Find all tool_use blocks (don't rely solely on stop_reason)
@@ -128,8 +135,11 @@ async function generatePptx(topic, workDir, outputPath) {
     messages.push({ role: "user", content: toolResults });
   }
 
+  // Verify output exists
   if (!fs.existsSync(outputPath)) {
-    throw new Error(`Agent finished but ${outputPath} was not created.`);
+    throw new Error(
+      `Agent finished but ${outputPath} was not created. Check agent logs.`
+    );
   }
 
   return outputPath;
