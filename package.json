@@ -1,0 +1,19 @@
+{
+  "name": "pptx-agent",
+  "version": "1.0.0",
+  "description": "Claude API agent that generates high-quality PPTX files",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "express": "^4.19.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
